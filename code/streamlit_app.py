@@ -5,6 +5,7 @@ import math
 from keras.models import Model
 from keras.layers import Input, Dense, Flatten
 from keras.applications.resnet50 import ResNet50, preprocess_input
+import plotly.express as px
 import cv2
 import sqlite3
 from urllib.request import Request, urlopen
@@ -656,6 +657,33 @@ class Wardrobe:
         filtered_df = self.filter_merged_df(merged_df)
         return filtered_df
 
+    def get_not_used_clothes(self):
+        query = 'SELECT a.id FROM wardrobe a WHERE NOT EXISTS (SELECT 1 FROM combinations b WHERE a.id = b.id_1 OR a.id = b.id_2)'
+        df = pd.read_sql_query(query, self.conn)
+        return df
+
+    def get_usage_fig(self):
+        # Step 1: Retrieve data
+        query = 'SELECT id, id_1, id_2 FROM combinations'
+        df = pd.read_sql_query(query, self.conn)
+        unused_ids = self.get_not_used_clothes()['id']
+        unused_data = pd.Series(0, index=unused_ids, name='Percentage')
+        # df = self.get_all_clothes_combinations()
+        # Step 2: Stack id_1 and id_2 columns into a single column and calculate percentages
+        stacked = df[['id_1', 'id_2']].stack().reset_index(level=1, drop=True).reset_index(name='Percentage')
+        percentage_values = stacked['Percentage'].value_counts() / len(df['id']) * 100
+        # Step 4: Combine the DataFrames
+        combined_df = pd.concat([percentage_values, unused_data], axis=0, sort=False)
+        combined_df = combined_df.rename_axis('ID')
+        average_percentage = combined_df.mean()
+        # Step 3: Create a Plotly chart
+        fig = px.bar(combined_df, orientation='h', height=len(df)*42,
+             title='Percentage of Clothes Participation in the Outfits created')
+        fig.add_shape(type="line", x0=average_percentage, x1=average_percentage, y0=combined_df.index.min()-0.5,
+              y1=combined_df.index.max()+0.5, line=dict(color="red", width=3))
+        fig.update_traces(marker_color='purple')
+        return fig
+
 
 # Streamlit Application
 ward = Wardrobe()
@@ -715,9 +743,10 @@ manage = st.sidebar.checkbox('My Wardrobe Management', help="Update article's fe
 identify = st.sidebar.checkbox('Colour Identification', help="Identify article's colour by double-clicking on a point in the photo")
 combine = st.sidebar.checkbox('Clothes Combinations', help='Make combinations from the clothes in your dressmeup wardrobe or from\
                                an online article and the clothes in your wardrobe')
+usage = st.sidebar.checkbox('Clothes Usage', help='Find the percent of clothes usage in your wardrobe\'s combinations')
 delete = st.sidebar.checkbox('Delete My Wardrobe', help='Delete the whole dressmeup wardrobe')
 
-if not view and not insert and not manage and not identify and not combine and not delete:
+if not view and not insert and not manage and not identify and not combine and not usage and not delete:
     '''
     You can check any option of the sidebar checkboxes to operate the following functions:
 
@@ -728,7 +757,8 @@ if not view and not insert and not manage and not identify and not combine and n
     4. Identify article's colour by double-clicking on a point in the photo (Colour identification option).
     5. Make combinations from the clothes in your dressmeup wardrobe or from an online article and the clothes in your wardrobe 
     (Clothes Combination option).
-    6. Delete the whole dressmeup wardrobe (Delete My Wardrobe option).
+    6. Find the percent of clothes usage in your wardrobe's combinations (Clothes Usage option).
+    7. Delete the whole dressmeup wardrobe (Delete My Wardrobe option).
     '''
 
 # Sidebar option to view the SQLite table
@@ -950,6 +980,10 @@ if combine:
             st.image(img_1, use_column_width='auto', channels='BGR')
             img_2 = ward.get_top_bottom_article_image_path(comb_id, 'Bottomwear')
             st.image(img_2, use_column_width='auto', channels='BGR')
+
+if usage:
+    fig = ward.get_usage_fig()
+    st.plotly_chart(fig, theme="streamlit", use_container_width=True)
 
 # Sidebar option to delete the wardrobe
 if delete:
